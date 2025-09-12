@@ -1,0 +1,296 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "e6c39067-5b7c-4234-b7c2-55fdc5b074fe",
+   "metadata": {},
+   "source": [
+    "!pip install google-api-python-client pandas matplotlib seaborn textblob\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "520dfa21-e566-41cc-b848-751033761204",
+   "metadata": {},
+   "source": [
+    "from googleapiclient.discovery import build\n",
+    "import pandas as pd\n",
+    "import matplotlib.pyplot as plt\n",
+    "import seaborn as sns\n",
+    "from textblob import TextBlob\n",
+    "import re\n",
+    "\n",
+    "# Your API key\n",
+    "API_KEY = 'YOUR_API_KEY_HERE'\n",
+    "\n",
+    "# Build the YouTube service\n",
+    "youtube = build('youtube', 'v3', developerKey=API_KEY)\n",
+    "\n",
+    "print(\"YouTube API connection successful!\") \n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e38c9ea5-cea1-44f5-948e-f973d76f0d7f",
+   "metadata": {},
+   "source": [
+    "def get_video_comments(video_id, max_results=1000):\n",
+    "    \"\"\"Collect comments from a YouTube video\"\"\"\n",
+    "    comments = []\n",
+    "    \n",
+    "    try:\n",
+    "        # Get video info first\n",
+    "        video_response = youtube.videos().list(\n",
+    "            part='snippet,statistics',\n",
+    "            id=video_id\n",
+    "        ).execute()\n",
+    "        \n",
+    "        video_title = video_response['items'][0]['snippet']['title']\n",
+    "        view_count = video_response['items'][0]['statistics']['viewCount']\n",
+    "        \n",
+    "        print(f\"Collecting comments from: {video_title}\")\n",
+    "        print(f\"Video has {view_count} views\")\n",
+    "        \n",
+    "        # Get comments\n",
+    "        request = youtube.commentThreads().list(\n",
+    "            part='snippet',\n",
+    "            videoId=video_id,\n",
+    "            maxResults=min(100, max_results),  # YouTube limits to 100 per request\n",
+    "            order='relevance'  # Get most engaging comments first\n",
+    "        )\n",
+    "        \n",
+    "        while request and len(comments) < max_results:\n",
+    "            response = request.execute()\n",
+    "            \n",
+    "            for item in response['items']:\n",
+    "                comment = item['snippet']['topLevelComment']['snippet']\n",
+    "                comments.append({\n",
+    "                    'author': comment['authorDisplayName'],\n",
+    "                    'text': comment['textDisplay'],\n",
+    "                    'likes': comment['likeCount'],\n",
+    "                    'published': comment['publishedAt'],\n",
+    "                    'reply_count': item['snippet']['totalReplyCount']\n",
+    "                })\n",
+    "            \n",
+    "            # Get next page if available\n",
+    "            request = youtube.commentThreads().list_next(request, response)\n",
+    "            \n",
+    "    except Exception as e:\n",
+    "        print(f\"Error: {e}\")\n",
+    "    \n",
+    "    print(f\"Collected {len(comments)} comments\")\n",
+    "    return comments, video_title\n",
+    "\n",
+    "# Test with All Too Well (10 Minute Version)\n",
+    "video_id = \"tollGa3S0o8\"\n",
+    "comments_data, title = get_video_comments(video_id, max_results=500)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e4e00059-1f7d-4c88-b828-7b65d292d62b",
+   "metadata": {},
+   "source": [
+    "# Convert to pandas DataFrame\n",
+    "df = pd.DataFrame(comments_data)\n",
+    "print(f\"Dataset shape: {df.shape}\")\n",
+    "print(\"\\nFirst few comments:\")\n",
+    "df.head()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "ba8041c4-00a1-45e7-a24e-85e4cfd452df",
+   "metadata": {},
+   "source": [
+    "# Basic stats\n",
+    "print(\"=== ENGAGEMENT METRICS ===\")\n",
+    "print(f\"Average likes per comment: {df['likes'].mean():.2f}\")\n",
+    "print(f\"Average reply count: {df['reply_count'].mean():.2f}\")\n",
+    "print(f\"Total engagement: {df['likes'].sum() + df['reply_count'].sum()}\")\n",
+    "\n",
+    "# Most liked comments\n",
+    "print(\"\\n=== TOP 5 MOST LIKED COMMENTS ===\")\n",
+    "top_comments = df.nlargest(5, 'likes')[['text', 'likes']]\n",
+    "for idx, row in top_comments.iterrows():\n",
+    "    print(f\"❤️ {row['likes']} likes: {row['text'][:100]}...\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c021bba7-4dd5-46b1-b9d6-22337efdd746",
+   "metadata": {},
+   "source": [
+    "# Define lore keywords to search for\n",
+    "lore_keywords = [\n",
+    "    # Other Taylor songs/albums\n",
+    "    'folklore', 'evermore', 'reputation', 'red', 'fearless', 'speak now',\n",
+    "    # Personal references  \n",
+    "    'jake', 'scarf', 'all too well', 'short film', 'sadie',\n",
+    "    # Theory language\n",
+    "    'theory', 'easter egg', 'hidden', 'meaning', 'about',\n",
+    "    # Timeline references\n",
+    "    '13', 'vault', 'version', 'original'\n",
+    "]\n",
+    "\n",
+    "def contains_lore(text):\n",
+    "    \"\"\"Check if comment contains lore-related content\"\"\"\n",
+    "    text_lower = text.lower()\n",
+    "    return any(keyword in text_lower for keyword in lore_keywords)\n",
+    "\n",
+    "# Add lore indicator\n",
+    "df['has_lore'] = df['text'].apply(contains_lore)\n",
+    "\n",
+    "print(f\"Comments with lore references: {df['has_lore'].sum()} / {len(df)} ({df['has_lore'].mean()*100:.1f}%)\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b74405c5-489d-4634-8c8b-4246a55b7e58",
+   "metadata": {},
+   "source": [
+    "# Personal connection keywords\n",
+    "personal_keywords = ['my life', 'saved me', 'crying', 'sobbing', 'feels', 'relate', 'going through']\n",
+    "\n",
+    "def contains_personal(text):\n",
+    "    text_lower = text.lower()\n",
+    "    return any(keyword in text_lower for keyword in personal_keywords)\n",
+    "\n",
+    "df['is_personal'] = df['text'].apply(contains_personal)\n",
+    "\n",
+    "print(f\"Personal connection comments: {df['is_personal'].sum()} / {len(df)} ({df['is_personal'].mean()*100:.1f}%)\")\n",
+    "\n",
+    "# Compare engagement levels\n",
+    "print(\"\\n=== ENGAGEMENT BY COMMENT TYPE ===\")\n",
+    "print(\"Average likes for lore comments:\", df[df['has_lore']]['likes'].mean())\n",
+    "print(\"Average likes for personal comments:\", df[df['is_personal']]['likes'].mean())\n",
+    "print(\"Average likes for other comments:\", df[~df['has_lore'] & ~df['is_personal']]['likes'].mean())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "22d54734-465f-416a-adbb-c1e872516b08",
+   "metadata": {},
+   "source": [
+    "# Let's see what lore content is most popular\n",
+    "lore_comments = df[df['has_lore']].nlargest(10, 'likes')[['text', 'likes']]\n",
+    "\n",
+    "print(\"=== TOP LORE COMMENTS ===\")\n",
+    "for idx, row in lore_comments.iterrows():\n",
+    "    print(f\"\\n❤️ {row['likes']} likes:\")\n",
+    "    print(f\"💬 {row['text'][:200]}...\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "f9a1b22d-b023-43e7-9077-2da7d8c5444f",
+   "metadata": {},
+   "source": [
+    "# Count mentions of specific lore elements\n",
+    "lore_analysis = {}\n",
+    "for keyword in lore_keywords:\n",
+    "    count = df['text'].str.lower().str.contains(keyword, na=False).sum()\n",
+    "    if count > 0:\n",
+    "        avg_likes = df[df['text'].str.lower().str.contains(keyword, na=False)]['likes'].mean()\n",
+    "        lore_analysis[keyword] = {'mentions': count, 'avg_likes': avg_likes}\n",
+    "\n",
+    "print(\"=== LORE KEYWORD ANALYSIS ===\")\n",
+    "for keyword, stats in sorted(lore_analysis.items(), key=lambda x: x[1]['avg_likes'], reverse=True):\n",
+    "    print(f\"{keyword}: {stats['mentions']} mentions, {stats['avg_likes']:.0f} avg likes\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "fe5b4279-2732-4d64-8d13-0f20e49ef62e",
+   "metadata": {},
+   "source": [
+    "# Let's compare this to a non-lore Taylor song\n",
+    "# How about \"Shake It Off\" - pure pop anthem, minimal narrative\n",
+    "shake_it_off_video_id = \"nfWlot6h_JM\"  # Shake It Off official video\n",
+    "\n",
+    "print(\"Now collecting 'Shake It Off' comments for comparison...\")\n",
+    "shake_comments, shake_title = get_video_comments(shake_it_off_video_id, max_results=500)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "797e0f96-f6fc-4929-86a4-17343388f8fb",
+   "metadata": {
+    "scrolled": true
+   },
+   "source": [
+    "# Convert Shake It Off comments to DataFrame\n",
+    "shake_df = pd.DataFrame(shake_comments)\n",
+    "\n",
+    "print(f\"=== SHAKE IT OFF vs ALL TOO WELL COMPARISON ===\")\n",
+    "print(f\"Shake It Off views: 3.6 BILLION vs All Too Well: 108 million\")\n",
+    "print(f\"That's 33x more views!\")\n",
+    "\n",
+    "# Apply same analysis to Shake It Off\n",
+    "shake_df['has_lore'] = shake_df['text'].apply(contains_lore)\n",
+    "shake_df['is_personal'] = shake_df['text'].apply(contains_personal)\n",
+    "\n",
+    "print(f\"\\n=== LORE ENGAGEMENT COMPARISON ===\")\n",
+    "print(f\"All Too Well - Lore comments: {df['has_lore'].mean()*100:.1f}%\")\n",
+    "print(f\"Shake It Off - Lore comments: {shake_df['has_lore'].mean()*100:.1f}%\")\n",
+    "\n",
+    "print(f\"\\n=== PERSONAL CONNECTION COMPARISON ===\") \n",
+    "print(f\"All Too Well - Personal comments: {df['is_personal'].mean()*100:.1f}%\")\n",
+    "print(f\"Shake It Off - Personal comments: {shake_df['is_personal'].mean()*100:.1f}%\")\n",
+    "\n",
+    "print(f\"\\n=== AVERAGE LIKES COMPARISON ===\")\n",
+    "print(\"ALL TOO WELL:\")\n",
+    "print(f\"  Lore comments: {df[df['has_lore']]['likes'].mean():.0f} avg likes\")\n",
+    "print(f\"  Personal comments: {df[df['is_personal']]['likes'].mean():.0f} avg likes\")\n",
+    "print(f\"  Other comments: {df[~df['has_lore'] & ~df['is_personal']]['likes'].mean():.0f} avg likes\")\n",
+    "\n",
+    "print(\"\\nSHAKE IT OFF:\")\n",
+    "print(f\"  Lore comments: {shake_df[shake_df['has_lore']]['likes'].mean():.0f} avg likes\")\n",
+    "print(f\"  Personal comments: {shake_df[shake_df['is_personal']]['likes'].mean():.0f} avg likes\")  \n",
+    "print(f\"  Other comments: {shake_df[~shake_df['has_lore'] & ~shake_df['is_personal']]['likes'].mean():.0f} avg likes\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "0a7de111-1b0a-4e80-90dd-aa9eb427cec6",
+   "metadata": {},
+   "source": [
+    "# Let's see what people talk about instead of lore\n",
+    "print(\"=== TOP SHAKE IT OFF COMMENTS ===\")\n",
+    "top_shake_comments = shake_df.nlargest(10, 'likes')[['text', 'likes']]\n",
+    "for idx, row in top_shake_comments.iterrows():\n",
+    "    print(f\"\\n❤️ {row['likes']} likes:\")\n",
+    "    print(f\"💬 {row['text'][:150]}...\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "754212f0-cb6b-4203-bf8e-70389b8b5222",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3 (ipykernel)",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.13.7"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}

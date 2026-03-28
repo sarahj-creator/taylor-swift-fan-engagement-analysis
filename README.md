@@ -1,5 +1,5 @@
 
-# Taylor Swift Fan Engagement Analysis
+# Narrative-Driven Audience Engagement Analysis
 
 ## Project Overview
 Analysis of fan engagement patterns comparing narrative-driven songs vs. pop anthems using YouTube comment data.
